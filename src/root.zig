@@ -62,7 +62,6 @@ const ZSTD_CONTENTSIZE_ERROR: u64 = std.math.maxInt(u64) - 1;
 extern "c" fn ZSTD_getFrameContentSize(src: *const anyopaque, srcSize: usize) u64;
 
 /// Get the decompressed size of a single zstd compressed frame.
-///
 /// Returns a usize value representing the decompressed size,
 pub fn get_decompressed_size(compressed: []const u8) !usize {
     const size = ZSTD_getFrameContentSize(compressed.ptr, compressed.len);
@@ -108,13 +107,10 @@ extern "c" fn ZSTD_compressBound(srcSize: usize) usize;
 
 /// Simple compression. The `level` parameter defines the trade-off between
 /// compression speed and the compression ratio.
-///
 /// It ranges from 1 (fastest) to 22 (slowest, but best compression).
 /// Simple compression. The `level` parameter defines the trade-off between
 /// compression speed and the compression ratio.
-///
 /// It ranges from 1 (fastest) to 22 (slowest, but best compression).
-///
 /// Caller owns the memory and is responsible for freeing it.
 pub fn simple_compress(allocator: std.mem.Allocator, input: []const u8, level: i32) ![]u8 {
     const bound = ZSTD_compressBound(input.len);
@@ -141,7 +137,6 @@ pub fn simple_compress(allocator: std.mem.Allocator, input: []const u8, level: i
 }
 
 /// Simple decompression when the decompressed size is known in advance.
-///
 /// Caller owns the memory and is responsible for freeing it.
 pub fn simple_decompress(
     allocator: std.mem.Allocator,
@@ -166,7 +161,6 @@ pub fn simple_decompress(
 }
 
 /// Simple decompression when the decompressed size is not known in advance.
-///
 /// Caller owns the memory and is responsible for freeing it.
 pub fn simple_auto_decompress(allocator: std.mem.Allocator, input: []const u8) ![]u8 {
     const output_size = try get_decompressed_size(input);
@@ -216,9 +210,7 @@ pub const ZSTD_strategy = enum(i16) {
 };
 
 /// Compression recipes for different data types
-///
 /// 1 is fstest, 22 is slowest but best compression. 3 is the default.
-///
 /// You can set "text", "structured_data", or "binary" for better compression of specific data types.
 pub const CompressionRecipe = enum {
     /// Fast compression for any data type (level 1, fast strategy)
@@ -371,9 +363,7 @@ pub fn free_compressor(ctx: *ZSTD_CCtx) usize {
 }
 
 /// Reset the compression context to be reused, keeping allocated memory.
-///
 /// This is more efficient than freeing and creating a new context.
-///
 /// Uses this when you want to compress many independent frames with the same context.
 pub fn reset_compressor_session(ctx: *ZSTD_CCtx) !void {
     const reset_result = ZSTD_CCtx_reset(ctx, ZSTD_ResetDirective.ZSTD_reset_session_only);
@@ -384,7 +374,6 @@ pub fn reset_compressor_session(ctx: *ZSTD_CCtx) !void {
 }
 
 /// Compress input data using an existing compression context with specified compression level.
-///
 /// Caller owns the memory and is responsible for freeing it.
 pub fn compress_with_ctx_with_level_override(
     allocator: std.mem.Allocator,
@@ -421,7 +410,6 @@ pub fn compress_with_ctx_with_level_override(
 }
 
 /// Compress input data using an existing compression context with its preset compression level.
-///
 /// Caller owns the memory and is responsible for freeing it.
 pub fn compress_with_ctx(
     allocator: std.mem.Allocator,
@@ -461,7 +449,6 @@ pub fn init_decompressor() !*ZSTD_DCtx {
 }
 
 /// Initialize a decompression context with optional memory limit.
-///
 /// max_window_log limits memory usage during decompression.
 /// Valid range: 10 to 31 (1KB to 2GB window size).
 /// Lower values = less memory but may fail on highly compressed data.
@@ -499,7 +486,6 @@ pub fn reset_decompressor_session(ctx: *ZSTD_DCtx) !void {
 }
 
 /// Decompress input data using an existing decompression context.
-///
 /// Caller owns the memory and is responsible for freeing it.
 pub fn decompress_with_ctx(
     allocator: std.mem.Allocator,
@@ -550,9 +536,7 @@ extern "c" fn ZSTD_decompress_usingDict(
 ) usize;
 
 /// Compress data using a dictionary for better compression of small similar files.
-///
 /// The dictionary should be trained on representative sample data.
-///
 /// Caller owns the memory and is responsible for freeing it.
 pub fn compress_with_dict(
     allocator: std.mem.Allocator,
@@ -592,7 +576,6 @@ pub fn compress_with_dict(
 }
 
 /// Decompress data that was compressed using a dictionary.
-///
 /// Caller owns the memory and is responsible for freeing it.
 pub fn decompress_with_dict(
     allocator: std.mem.Allocator,
@@ -698,9 +681,7 @@ pub fn getDecompressStreamOutSize() usize {
 }
 
 /// Streaming compression - compresses input chunk by chunk.
-///
 /// Caller must call repeatedly with chunks until all input is consumed
-///
 /// Returns number of bytes remaining to flush (0 when done)
 pub fn compressStream(
     ctx: *ZSTD_CCtx,
@@ -717,7 +698,6 @@ pub fn compressStream(
 }
 
 /// Streaming decompression - decompresses input chunk by chunk.
-///
 /// Returns hint for next input size (or 0 if frame complete)
 pub fn decompressStream(
     ctx: *ZSTD_DCtx,
