@@ -3,7 +3,11 @@
 //! A fast lossless compression algorithm.
 //! Source: https://facebook.github.io/zstd/doc/api_manual_latest.html
 //!
-//! This module provides a stateless API, a stateful API, and a streaming API.
+//! This module provides:
+//! - a stateless API: one shot compression and decompression functions,
+//! - a stateful API: compression contexts for reusing memory, with possible more control on memory usage, or compression parameters depending on data types
+//! - a streaming API.
+//! - dictionary support for repeated data patterns.
 //!
 //! The tests in main.zig provide examples of how to use the different APIs.
 const std = @import("std");
@@ -267,6 +271,7 @@ extern "c" fn ZSTD_compressCCtx(
     srcSize: usize,
     compressionLevel: i16,
 ) usize;
+
 extern "c" fn ZSTD_compress2(
     cctx: *ZSTD_CCtx,
     dst: [*]u8,
