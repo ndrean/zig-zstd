@@ -1,6 +1,8 @@
 //! Bindings and wrappers for Zstandard (zstd) compression library.
-//! https://facebook.github.io/zstd/doc/api_manual_latest.html
-//! This module provides both stateless and stateful compression APIs.
+//!
+//! Source: https://facebook.github.io/zstd/doc/api_manual_latest.html
+//!
+//! This module provides a stateless API, a stateful API, and a streaming API.
 const std = @import("std");
 
 ///Most ZSTD_* functions returning a size_t value can be tested for error,
