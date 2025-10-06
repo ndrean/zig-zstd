@@ -195,6 +195,7 @@ extern "c" fn ZSTD_decompressDCtx(
 
 extern "c" fn ZSTD_getFrameContentSize(src: *anyopaque, srcSize: usize) usize;
 
+/// Initialize a compression context with specified compression level.
 pub fn init_compressor(compressionLevel: i16) !*ZSTD_CCtx {
     const cctx = ZSTD_createCCtx();
     if (cctx) |ctx| {
@@ -215,10 +216,16 @@ pub fn init_compressor(compressionLevel: i16) !*ZSTD_CCtx {
     }
 }
 
+/// Free the compression context, returning the size of memory freed.
 pub fn free_compressor(ctx: *ZSTD_CCtx) usize {
     return ZSTD_freeCCtx(ctx);
 }
 
+/// Reset the compression context to be reused, keeping allocated memory.
+///
+/// This is more efficient than freeing and creating a new context.
+///
+/// Uses this when you want to compress many independent frames with the same context.
 pub fn reset_compressor_session(ctx: *ZSTD_CCtx) !void {
     const reset_resut = ZSTD_CCtx_reset(ctx, ZSTD_ResetDirective.ZSTD_reset_session_only);
     if (ZSTD_isError(reset_resut) == 1) {
@@ -227,6 +234,7 @@ pub fn reset_compressor_session(ctx: *ZSTD_CCtx) !void {
     }
 }
 
+/// Compress input data using an existing compression context with specified compression level.
 pub fn compress_with_ctx_with_level_override(
     allocator: std.mem.Allocator,
     ctx: *ZSTD_CCtx,
@@ -257,6 +265,7 @@ pub fn compress_with_ctx_with_level_override(
     return allocator.realloc(out, written_size);
 }
 
+/// Compress input data using an existing compression context with its preset compression level.
 pub fn compress_with_ctx(
     allocator: std.mem.Allocator,
     ctx: *ZSTD_CCtx,
@@ -285,6 +294,7 @@ pub fn compress_with_ctx(
     return allocator.realloc(out, written_size);
 }
 
+/// Initialize a decompression context.
 pub fn init_decompressor() !*ZSTD_DCtx {
     const dctx = ZSTD_createDCtx();
     if (dctx) |ctx| {
@@ -294,10 +304,12 @@ pub fn init_decompressor() !*ZSTD_DCtx {
     return error.ZstdError;
 }
 
+/// Free the decompression context, returning the size of memory freed.
 pub fn free_decompressor(ctx: *ZSTD_DCtx) usize {
     return ZSTD_freeDCtx(ctx);
 }
 
+/// Reset the decompression context to be reused, keeping allocated memory.
 pub fn reset_decompressor_session(ctx: *ZSTD_DCtx) !void {
     const reset_resut = ZSTD_DCtx_reset(ctx, ZSTD_ResetDirective.ZSTD_reset_session_only);
     if (ZSTD_isError(reset_resut) == 1) {
@@ -306,6 +318,7 @@ pub fn reset_decompressor_session(ctx: *ZSTD_DCtx) !void {
     }
 }
 
+/// Decompress input data using an existing decompression context.
 pub fn decompress_with_ctx(
     allocator: std.mem.Allocator,
     ctx: *ZSTD_DCtx,
@@ -416,8 +429,10 @@ pub fn getDecompressStreamOutSize() usize {
     return ZSTD_DStreamOutSize();
 }
 
-/// Streaming compression - compresses input chunk by chunk
+/// Streaming compression - compresses input chunk by chunk.
+///
 /// Caller must call repeatedly with chunks until all input is consumed
+///
 /// Returns number of bytes remaining to flush (0 when done)
 pub fn compressStream(
     ctx: *ZSTD_CCtx,
@@ -433,7 +448,8 @@ pub fn compressStream(
     return result;
 }
 
-/// Streaming decompression - decompresses input chunk by chunk
+/// Streaming decompression - decompresses input chunk by chunk.
+///
 /// Returns hint for next input size (or 0 if frame complete)
 pub fn decompressStream(
     ctx: *ZSTD_DCtx,
