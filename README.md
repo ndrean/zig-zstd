@@ -1,6 +1,18 @@
-# Zig-std
+# z-std
 
-Goal: build a standalone library that wraps most of the C library with advanced usage, mainly for learning.
+A Zig wrapper for the Zstandard (zstd) compression library.
+
+This module provides idiomatic Zig bindings to the zstd C library using the C ABI (`extern "c"`), offering both simple one-shot functions and advanced streaming/stateful APIs.
+
+**Goal**: Build a standalone, well-documented library wrapping zstd functionality with Zig's memory safety and error handling.
+
+## Architecture
+
+This library uses:
+
+- **C ABI interop**: Direct `extern "c"` function declarations to call zstd functions
+- **Static linking**: Links against `libzstd.a` built from source
+- **Zero-cost abstractions**: Thin Zig wrappers that add type safety and error handling without runtime overhead
 
 ## Module content
 
@@ -26,16 +38,39 @@ const decompressed = try z.simple_auto_decompress(allocator, compressed);
 defer allocator.free(decompressed);
 ```
 
-## ZSTD documentation
+## Building
 
-- documentation link:
+### 1. Build the zstd static library
 
-<https://facebook.github.io/zstd/doc/api_manual_latest.html#Chapter4>
-
-## Build static archive of `zstd`
-
-Build a static object `lib_zstd.a` with:
+The project uses a static archive of zstd (`libzstd.a`). Build it from the vendored source:
 
 ```sh
 make
 ```
+
+This invokes the Makefile which builds `vendor/zstd/libzstd.a`.
+
+### 2. Build the Zig wrapper
+
+```sh
+zig build
+```
+
+The `build.zig` file:
+
+1. Runs `make` to ensure `libzstd.a` exists
+2. Links the static library via C ABI
+3. Produces `libz_zstd.a` (the Zig wrapper)
+
+### 3. Run tests
+
+```sh
+zig build test
+```
+
+This runs all tests in `src/main.zig`, demonstrating each API.
+
+## References
+
+- [Zstandard API Documentation](https://facebook.github.io/zstd/doc/api_manual_latest.html)
+- [Zstandard GitHub](https://github.com/facebook/zstd)
