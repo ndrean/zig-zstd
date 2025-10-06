@@ -57,6 +57,9 @@ pub fn build(b: *std.Build) void {
     lib.addObjectFile(zstd_static_lib_path);
     lib.linkLibC();
 
+    const make_step = b.addSystemCommand(&.{ "make", "-C", "vendor/zstd", "libzstd.a" });
+    lib.step.dependOn(&make_step.step);
+
     const mod = b.addModule("z_std", .{
         .root_source_file = b.path("src/root.zig"),
         .target = target,

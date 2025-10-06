@@ -10,6 +10,50 @@ pub fn main() !void {
     std.debug.print("Zstd version: {s}\n", .{v});
 }
 
+test "stateless compress and decompress" {
+    const allocator = std.testing.allocator;
+
+    const input = "Hello, world!" ** 1000;
+    const compressed_data = try z.simple_compress(
+        allocator,
+        input,
+        3,
+    );
+    defer allocator.free(compressed_data);
+    std.debug.print(
+        "data: {d} -> Compressed: {d}\n",
+        .{ input.len, compressed_data.len },
+    );
+
+    const decompressed_data = try z.simple_decompress(
+        allocator,
+        compressed_data,
+        input.len,
+    );
+    defer allocator.free(decompressed_data);
+
+    const decompressed_data_auto = try z.simple_auto_decompress(
+        allocator,
+        compressed_data,
+    );
+    defer allocator.free(decompressed_data_auto);
+
+    std.debug.print(
+        "data: {d} -> compress: {d} -> decompress: {d}, auto: {d}\n",
+        .{ input.len, compressed_data.len, decompressed_data.len, decompressed_data_auto.len },
+    );
+
+    try std.testing.expectEqualSlices(
+        u8,
+        input,
+        decompressed_data,
+    );
+    try std.testing.expectEqualSlices(
+        u8,
+        decompressed_data,
+        decompressed_data_auto,
+    );
+}
 test "statefull - context based compress and decompress" {
     const allocator = std.testing.allocator;
 
@@ -110,16 +154,17 @@ test "statefull - context based compress and decompress" {
     try z.reset_decompressor_session(dctx);
 
     // 3)
-    const pdf = std.fs.cwd().openFile("src/tests/test.png", .{}) catch |err| {
-        std.log.err("Failed to open test.png: {any}", .{err});
+    const pdf = std.fs.cwd().openFile("src/tests/test.pdf", .{}) catch |err| {
+        std.log.err("Failed to open test.pdf: {any}", .{err});
         return;
     };
     defer pdf.close();
-    const stat_pdf = try img.stat();
-    const pdf_data = try img.readToEndAlloc(
+    const stat_pdf = try pdf.stat();
+    const pdf_data = try pdf.readToEndAlloc(
         allocator,
         stat_pdf.size,
     );
+    std.debug.print("PDF size: {d}\n", .{pdf_data.len});
     defer allocator.free(pdf_data);
     const compressed_pdf = try z.compress_with_ctx(
         allocator,
@@ -140,6 +185,7 @@ test "statefull - context based compress and decompress" {
         "pdf: {d} -> compress: {d} -> decompress: {d}\n",
         .{ pdf_data.len, compressed_pdf.len, decompressed_pdf.len },
     );
+    try std.testing.expect(decompressed_pdf.len == pdf_data.len);
 }
 
 test "streaming compress and decompress file" {
@@ -359,4 +405,126 @@ test "streaming compress and decompress file" {
         defer allocator.free(original);
         try std.testing.expectEqualSlices(u8, original, decompressed_buffer[0..decompressed_size]);
     }
+}
+
+test "compression recipes" {
+    const allocator = std.testing.allocator;
+
+    const text_data = "Hello, World! This is a test of text compression." ** 20;
+
+    // Test different recipes
+    const recipes = [_]z.CompressionRecipe{
+        .fast,
+        .balanced,
+        .text,
+        .structured_data,
+    };
+
+    for (recipes) |recipe| {
+        const cctx = try z.init_compressor_with_recipe(recipe);
+        defer _ = z.free_compressor(cctx);
+
+        const compressed = try z.compress_with_ctx(allocator, cctx, text_data);
+        defer allocator.free(compressed);
+
+        std.debug.print(
+            "Recipe {s}: {d} -> {d} bytes ({d:.1}% ratio)\n",
+            .{
+                @tagName(recipe),
+                text_data.len,
+                compressed.len,
+                @as(f64, @floatFromInt(compressed.len)) / @as(f64, @floatFromInt(text_data.len)) * 100.0,
+            },
+        );
+
+        const dctx = try z.init_decompressor();
+        defer _ = z.free_decompressor(dctx);
+
+        const decompressed = try z.decompress_with_ctx(
+            allocator,
+            dctx,
+            compressed,
+            text_data.len,
+        );
+        defer allocator.free(decompressed);
+
+        try std.testing.expectEqualSlices(u8, text_data, decompressed);
+    }
+}
+
+test "dictionary compression" {
+    const allocator = std.testing.allocator;
+
+    // Simulate multiple similar JSON-like strings
+    const sample1 = "{\"name\":\"Alice\",\"age\":30,\"city\":\"New York\"}";
+    const sample2 = "{\"name\":\"Bob\",\"age\":25,\"city\":\"Los Angeles\"}";
+    // const sample3 = "{\"name\":\"Charlie\",\"age\":35,\"city\":\"Chicago\"}";
+
+    // Use first sample as dictionary
+    const dictionary = sample1;
+
+    const cctx = try z.init_compressor(3);
+    defer _ = z.free_compressor(cctx);
+
+    // Compress with dictionary
+    const compressed_with_dict = try z.compress_with_dict(
+        allocator,
+        cctx,
+        sample2,
+        dictionary,
+        3,
+    );
+    defer allocator.free(compressed_with_dict);
+
+    // Compress without dictionary for comparison
+    const compressed_without_dict = try z.compress_with_ctx(allocator, cctx, sample2);
+    defer allocator.free(compressed_without_dict);
+
+    std.debug.print(
+        "Dictionary compression: {d} bytes (with dict) vs {d} bytes (without dict)\n",
+        .{ compressed_with_dict.len, compressed_without_dict.len },
+    );
+
+    // Decompress with dictionary
+    const dctx = try z.init_decompressor();
+    defer _ = z.free_decompressor(dctx);
+
+    const decompressed = try z.decompress_with_dict(
+        allocator,
+        dctx,
+        compressed_with_dict,
+        dictionary,
+        sample2.len,
+    );
+    defer allocator.free(decompressed);
+
+    try std.testing.expectEqualSlices(u8, sample2, decompressed);
+}
+
+test "decompressor with memory limit" {
+    const allocator = std.testing.allocator;
+
+    const data = "Test data" ** 100;
+
+    // Compress normally
+    const cctx = try z.init_compressor(3);
+    defer _ = z.free_compressor(cctx);
+
+    const compressed = try z.compress_with_ctx(allocator, cctx, data);
+    defer allocator.free(compressed);
+
+    // Decompress with memory limit (window log 20 = 1MB max)
+    const dctx = try z.init_decompressor_with_limit(20);
+    defer _ = z.free_decompressor(dctx);
+
+    const decompressed = try z.decompress_with_ctx(
+        allocator,
+        dctx,
+        compressed,
+        data.len,
+    );
+    defer allocator.free(decompressed);
+
+    try std.testing.expectEqualSlices(u8, data, decompressed);
+    std.debug.print("Decompression with memory limit: SUCCESS\n", .{});
 }
