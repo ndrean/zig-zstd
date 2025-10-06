@@ -3,6 +3,8 @@
 //! Source: https://facebook.github.io/zstd/doc/api_manual_latest.html
 //!
 //! This module provides a stateless API, a stateful API, and a streaming API.
+//!
+//! The tests in main.zig provide examples of how to use the different APIs.
 const std = @import("std");
 
 ///Most ZSTD_* functions returning a size_t value can be tested for error,
