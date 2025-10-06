@@ -1,20 +1,39 @@
 //! Bindings and wrappers for Zstandard (zstd) compression library.
 //!
-//! A fast lossless compression algorithm.
+//! Zstandard is a fast lossless compression algorithm, targeting real-time compression scenarios
+//! at zlib-level and better compression ratios.
+//!
 //! Source: https://facebook.github.io/zstd/doc/api_manual_latest.html
 //!
-//! This module provides:
-//! - a stateless API: one shot compression and decompression functions,
-//! - a stateful API: compression contexts for reusing memory, with possible more control on memory usage, or compression parameters depending on data types
-//! - a streaming API.
-//! - dictionary support for repeated data patterns.
+//! ## This module provides:
 //!
-//! The tests in main.zig provide examples of how to use the different APIs.
+//! - **Stateless API**: One-shot compression and decompression functions
+//! - **Stateful API**: Compression contexts for reusing memory, with fine control over
+//!   compression parameters and memory usage
+//! - **Streaming API**: Chunk-by-chunk compression for large files
+//! - **Dictionary support**: Better compression for small files with repeated patterns
+//! - **Compression recipes**: Optimized presets for different data types (text, JSON, binary)
+//!
+//! ## Examples
+//!
+//! See the tests in main.zig for comprehensive usage examples of all APIs.
+//!
+//! ## Quick Start
+//!
+//! ```zig
+//! // Simple compression
+//! const compressed = try z.simple_compress(allocator, data, 3);
+//! defer allocator.free(compressed);
+//!
+//! // Auto-detecting decompression
+//! const decompressed = try z.simple_auto_decompress(allocator, compressed);
+//! defer allocator.free(decompressed);
+//! ```
 const std = @import("std");
 
-///Most ZSTD_* functions returning a size_t value can be tested for error,
-///using ZSTD_isError().
-/// @@return 1 if error, 0 otherwise
+// Most ZSTD_* functions returning a size_t value can be tested for error
+// using ZSTD_isError().
+// @return: 1 if error, 0 otherwise
 extern "c" fn ZSTD_isError(code: usize) c_uint;
 extern "c" fn ZSTD_getErrorName(code: usize) [*c]const u8;
 
