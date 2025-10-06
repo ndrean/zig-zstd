@@ -384,6 +384,8 @@ pub fn reset_compressor_session(ctx: *ZSTD_CCtx) !void {
 }
 
 /// Compress input data using an existing compression context with specified compression level.
+///
+/// Caller owns the memory and is responsible for freeing it.
 pub fn compress_with_ctx_with_level_override(
     allocator: std.mem.Allocator,
     ctx: *ZSTD_CCtx,
@@ -419,6 +421,8 @@ pub fn compress_with_ctx_with_level_override(
 }
 
 /// Compress input data using an existing compression context with its preset compression level.
+///
+/// Caller owns the memory and is responsible for freeing it.
 pub fn compress_with_ctx(
     allocator: std.mem.Allocator,
     ctx: *ZSTD_CCtx,
@@ -495,6 +499,8 @@ pub fn reset_decompressor_session(ctx: *ZSTD_DCtx) !void {
 }
 
 /// Decompress input data using an existing decompression context.
+///
+/// Caller owns the memory and is responsible for freeing it.
 pub fn decompress_with_ctx(
     allocator: std.mem.Allocator,
     ctx: *ZSTD_DCtx,
@@ -546,6 +552,8 @@ extern "c" fn ZSTD_decompress_usingDict(
 /// Compress data using a dictionary for better compression of small similar files.
 ///
 /// The dictionary should be trained on representative sample data.
+///
+/// Caller owns the memory and is responsible for freeing it.
 pub fn compress_with_dict(
     allocator: std.mem.Allocator,
     ctx: *ZSTD_CCtx,
@@ -584,6 +592,8 @@ pub fn compress_with_dict(
 }
 
 /// Decompress data that was compressed using a dictionary.
+///
+/// Caller owns the memory and is responsible for freeing it.
 pub fn decompress_with_dict(
     allocator: std.mem.Allocator,
     ctx: *ZSTD_DCtx,
