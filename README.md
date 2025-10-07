@@ -2,7 +2,7 @@
 
 ![Zig support](https://img.shields.io/badge/Zig-0.15.1-color?logo=zig&color=%23f3ab20)
 
-A Zig wrapper for the Zstandard (zstd) compression library.
+A Zig wrapper for the Zstandard (zstd) compression library, licensed under GPL2.
 
 This module provides idiomatic Zig bindings to the zstd C library using the C ABI (`extern "c"`), offering both simple one-shot functions and advanced streaming/stateful APIs.
 
