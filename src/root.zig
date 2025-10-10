@@ -7,9 +7,7 @@
 //!
 //! ## This module provides:
 //!
-//! - **Stateless API**: One-shot compression and decompression functions
-//! - **Stateful API**: Compression contexts for reusing memory, with fine control over
-//!   compression parameters and memory usage
+//! - **Context-based API**: Simple compress/decompress with flexible configuration
 //! - **Streaming API**: Chunk-by-chunk compression for large files
 //! - **Dictionary support**: Better compression for small files with repeated patterns
 //! - **Compression recipes**: Optimized presets for different data types (text, JSON, binary)
@@ -21,12 +19,18 @@
 //! ## Quick Start
 //!
 //! ```zig
-//! // Simple compression
-//! const compressed = try z.simple_compress(allocator, data, 3);
+//! // Initialize contexts
+//! const cctx = try z.init_compressor(.{}); // uses balanced defaults (level 3, dfast)
+//! defer _ = z.free_compressor(cctx);
+//!
+//! const dctx = try z.init_decompressor(.{}); // no memory limit
+//! defer _ = z.free_decompressor(dctx);
+//!
+//! // Compress and decompress
+//! const compressed = try z.compress(allocator, cctx, data);
 //! defer allocator.free(compressed);
 //!
-//! // Auto-detecting decompression
-//! const decompressed = try z.simple_auto_decompress(allocator, compressed);
+//! const decompressed = try z.decompress(allocator, dctx, compressed); // auto-detects size
 //! defer allocator.free(decompressed);
 //! ```
 const std = @import("std");
@@ -101,74 +105,8 @@ extern "c" fn ZSTD_decompress(
 /// which can be tested using ZSTD_isError().
 extern "c" fn ZSTD_compressBound(srcSize: usize) usize;
 
-// -----------------------------------
-// === Stateless "Simple Core" API ===
-// -----------------------------------
-
-/// Simple compression. The `level` parameter defines the trade-off between
-/// compression speed and the compression ratio.
-/// It ranges from 1 (fastest) to 22 (slowest, but best compression).
-/// Simple compression. The `level` parameter defines the trade-off between
-/// compression speed and the compression ratio.
-/// It ranges from 1 (fastest) to 22 (slowest, but best compression).
-/// Caller owns the memory and is responsible for freeing it.
-pub fn simple_compress(allocator: std.mem.Allocator, input: []const u8, level: i32) ![]u8 {
-    const bound = ZSTD_compressBound(input.len);
-    if (ZSTD_isError(bound) == 1) {
-        std.log.err("Zstd error: {s}", .{ZSTD_getErrorName(bound)});
-        return error.ZstdError;
-    }
-
-    const out = try allocator.alloc(u8, bound);
-    errdefer allocator.free(out);
-
-    const written_size = ZSTD_compress(
-        out.ptr,
-        bound,
-        input.ptr,
-        input.len,
-        level,
-    );
-    if (ZSTD_isError(written_size) == 1) {
-        std.log.err("Zstd error: {s}", .{ZSTD_getErrorName(written_size)});
-        return error.ZstdError;
-    }
-    return allocator.realloc(out, written_size);
-}
-
-/// Simple decompression when the decompressed size is known in advance.
-/// Caller owns the memory and is responsible for freeing it.
-pub fn simple_decompress(
-    allocator: std.mem.Allocator,
-    input: []const u8,
-    output_size: usize,
-) ![]u8 {
-    const out = try allocator.alloc(u8, output_size);
-    errdefer allocator.free(out);
-
-    const written = ZSTD_decompress(
-        out.ptr,
-        output_size,
-        input.ptr,
-        input.len,
-    );
-
-    if (ZSTD_isError(written) == 1) {
-        std.log.err("Zstd error: {s}", .{ZSTD_getErrorName(written)});
-        return error.ZstdError;
-    }
-    return allocator.realloc(out, written);
-}
-
-/// Simple decompression when the decompressed size is not known in advance.
-/// Caller owns the memory and is responsible for freeing it.
-pub fn simple_auto_decompress(allocator: std.mem.Allocator, input: []const u8) ![]u8 {
-    const output_size = try get_decompressed_size(input);
-    return simple_decompress(allocator, input, output_size);
-}
-
 // ---------------------------------------
-// === Stateful "Explicit Context" API ===
+// === Context-based API ===
 // ---------------------------------------
 
 pub const ZSTD_CCtx = extern struct {};
@@ -210,7 +148,7 @@ pub const ZSTD_strategy = enum(i16) {
 };
 
 /// Compression recipes for different data types
-/// 1 is fstest, 22 is slowest but best compression. 3 is the default.
+/// 1 is fastest, 22 is slowest but best compression. 3 is the default.
 /// You can set "text", "structured_data", or "binary" for better compression of specific data types.
 pub const CompressionRecipe = enum {
     /// Fast compression for any data type (level 1, fast strategy)
@@ -247,6 +185,50 @@ pub const CompressionRecipe = enum {
             .binary => .ZSTD_lazy2,
         };
     }
+};
+
+/// Configuration for compression context initialization.
+/// Provides flexible control over compression level and strategy.
+///
+/// ## Usage patterns:
+///
+/// ```zig
+/// // Use recipe defaults (recommended)
+/// const cfg1 = CompressionConfig{ .recipe = .text };
+/// // → level 9 + btopt strategy
+///
+/// // Override level while keeping recipe's strategy
+/// const cfg2 = CompressionConfig{ .compression_level = 15, .recipe = .text };
+/// // → level 15 + btopt strategy
+///
+/// // Custom level with default strategy
+/// const cfg3 = CompressionConfig{ .compression_level = 5 };
+/// // → level 5 + dfast strategy
+///
+/// // Use all defaults
+/// const cfg4 = CompressionConfig{};
+/// // → level 3 + dfast strategy (balanced)
+/// ```
+pub const CompressionConfig = struct {
+    compression_level: ?i16 = null,
+    recipe: ?CompressionRecipe = null,
+};
+
+/// Configuration for decompression context initialization.
+///
+/// ## Usage patterns:
+///
+/// ```zig
+/// // Use defaults (no memory limit)
+/// const cfg1 = DecompressionConfig{};
+///
+/// // Limit memory usage
+/// const cfg2 = DecompressionConfig{ .max_window_log = 20 }; // 1MB window
+/// ```
+pub const DecompressionConfig = struct {
+    /// Maximum window size log (10-31: 1KB to 2GB window size).
+    /// Lower values = less memory but may fail on highly compressed data.
+    max_window_log: ?i16 = null,
 };
 
 const ZSTD_bounds = struct {
@@ -304,54 +286,50 @@ extern "c" fn ZSTD_decompressDCtx(
 extern "c" fn ZSTD_minCLevel() c_int;
 extern "c" fn ZSTD_maxCLevel() c_int;
 
-/// Initialize a compression context with specified compression level.
-pub fn init_compressor(compressionLevel: i32) !*ZSTD_CCtx {
-    if (compressionLevel < ZSTD_minCLevel() or compressionLevel > ZSTD_maxCLevel()) {
-        return error.InvalidCompressionLevel;
-    }
-    const cctx = ZSTD_createCCtx();
-    if (cctx) |ctx| {
-        const ctx_set_result = ZSTD_CCtx_setParameter(
-            ctx,
-            ZSTD_cParameter.ZSTD_c_compressionLevel,
-            @intCast(compressionLevel),
-        );
-        if (ZSTD_isError(ctx_set_result) == 1) {
-            std.log.err("Zstd error: {s}", .{ZSTD_getErrorName(ctx_set_result)});
-            return error.ZstdError;
-        }
-
-        return ctx;
-    } else {
-        return error.ZstdError;
-    }
-}
-
-/// Initialize a compression context with a recipe for specific data types.
-pub fn init_compressor_with_recipe(recipe: CompressionRecipe) !*ZSTD_CCtx {
+/// Initialize a compression context with flexible configuration.
+/// Supports all usage patterns: recipe defaults, level override, custom level, or all defaults.
+///
+/// Priority: explicit level > recipe.getLevel() > default (3)
+/// Strategy: recipe.getStrategy() > default (dfast)
+pub fn init_compressor(config: CompressionConfig) !*ZSTD_CCtx {
     const cctx = ZSTD_createCCtx() orelse return error.ZstdError;
     errdefer _ = ZSTD_freeCCtx(cctx);
+
+    // Determine compression level
+    const level: i16 = if (config.compression_level) |lvl|
+        lvl
+    else if (config.recipe) |recipe|
+        recipe.getLevel()
+    else
+        3; // default
+
+    // Validate level
+    if (level < ZSTD_minCLevel() or level > ZSTD_maxCLevel()) {
+        return error.InvalidCompressionLevel;
+    }
 
     // Set compression level
     var result = ZSTD_CCtx_setParameter(
         cctx,
         ZSTD_cParameter.ZSTD_c_compressionLevel,
-        recipe.getLevel(),
+        level,
     );
     if (ZSTD_isError(result) == 1) {
         std.log.err("Zstd error: {s}", .{ZSTD_getErrorName(result)});
         return error.ZstdError;
     }
 
-    // Set strategy
-    result = ZSTD_CCtx_setParameter(
-        cctx,
-        ZSTD_cParameter.ZSTD_c_strategy,
-        @intFromEnum(recipe.getStrategy()),
-    );
-    if (ZSTD_isError(result) == 1) {
-        std.log.err("Zstd error: {s}", .{ZSTD_getErrorName(result)});
-        return error.ZstdError;
+    // Set strategy if recipe provided
+    if (config.recipe) |recipe| {
+        result = ZSTD_CCtx_setParameter(
+            cctx,
+            ZSTD_cParameter.ZSTD_c_strategy,
+            @intFromEnum(recipe.getStrategy()),
+        );
+        if (ZSTD_isError(result) == 1) {
+            std.log.err("Zstd error: {s}", .{ZSTD_getErrorName(result)});
+            return error.ZstdError;
+        }
     }
 
     return cctx;
@@ -373,45 +351,10 @@ pub fn reset_compressor_session(ctx: *ZSTD_CCtx) !void {
     }
 }
 
-/// Compress input data using an existing compression context with specified compression level.
+/// Compress data using an existing compression context.
+/// Uses the context's preset parameters (level, strategy).
 /// Caller owns the memory and is responsible for freeing it.
-pub fn compress_with_ctx_with_level_override(
-    allocator: std.mem.Allocator,
-    ctx: *ZSTD_CCtx,
-    input: []const u8,
-    compressionLevel: i16,
-) ![]u8 {
-    if (compressionLevel < ZSTD_minCLevel() or compressionLevel > ZSTD_maxCLevel()) {
-        return error.InvalidCompressionLevel;
-    }
-
-    const bound = ZSTD_compressBound(input.len);
-    if (ZSTD_isError(bound) == 1) {
-        std.log.err("Zstd error: {s}", .{ZSTD_getErrorName(bound)});
-        return error.ZstdError;
-    }
-
-    const out = try allocator.alloc(u8, bound);
-    errdefer allocator.free(out);
-
-    const written_size = ZSTD_compressCCtx(
-        ctx,
-        out.ptr,
-        bound,
-        input.ptr,
-        input.len,
-        compressionLevel,
-    );
-    if (ZSTD_isError(written_size) == 1) {
-        std.log.err("Zstd error: {s}", .{ZSTD_getErrorName(written_size)});
-        return error.ZstdError;
-    }
-    return allocator.realloc(out, written_size);
-}
-
-/// Compress input data using an existing compression context with its preset compression level.
-/// Caller owns the memory and is responsible for freeing it.
-pub fn compress_with_ctx(
+pub fn compress(
     allocator: std.mem.Allocator,
     ctx: *ZSTD_CCtx,
     input: []const u8,
@@ -439,24 +382,12 @@ pub fn compress_with_ctx(
     return allocator.realloc(out, written_size);
 }
 
-/// Initialize a decompression context.
-pub fn init_decompressor() !*ZSTD_DCtx {
-    const dctx = ZSTD_createDCtx();
-    if (dctx) |ctx| {
-        return ctx;
-    }
-    return error.ZstdError;
-}
-
-/// Initialize a decompression context with optional memory limit.
-/// max_window_log limits memory usage during decompression.
-/// Valid range: 10 to 31 (1KB to 2GB window size).
-/// Lower values = less memory but may fail on highly compressed data.
-pub fn init_decompressor_with_limit(max_window_log: ?i16) !*ZSTD_DCtx {
+/// Initialize a decompression context with optional configuration.
+pub fn init_decompressor(config: DecompressionConfig) !*ZSTD_DCtx {
     const dctx = ZSTD_createDCtx() orelse return error.ZstdError;
     errdefer _ = ZSTD_freeDCtx(dctx);
 
-    if (max_window_log) |window_log| {
+    if (config.max_window_log) |window_log| {
         const result = ZSTD_DCtx_setParameter(
             dctx,
             ZSTD_dParameter.ZSTD_d_windowLogMax,
@@ -478,21 +409,23 @@ pub fn free_decompressor(ctx: *ZSTD_DCtx) usize {
 
 /// Reset the decompression context to be reused, keeping allocated memory.
 pub fn reset_decompressor_session(ctx: *ZSTD_DCtx) !void {
-    const reset_resut = ZSTD_DCtx_reset(ctx, ZSTD_ResetDirective.ZSTD_reset_session_only);
-    if (ZSTD_isError(reset_resut) == 1) {
-        std.log.err("Zstd error: {s}", .{ZSTD_getErrorName(reset_resut)});
+    const reset_result = ZSTD_DCtx_reset(ctx, ZSTD_ResetDirective.ZSTD_reset_session_only);
+    if (ZSTD_isError(reset_result) == 1) {
+        std.log.err("Zstd error: {s}", .{ZSTD_getErrorName(reset_result)});
         return error.ZstdError;
     }
 }
 
-/// Decompress input data using an existing decompression context.
+/// Decompress data using an existing decompression context.
+/// Automatically detects the decompressed size from the compressed data.
 /// Caller owns the memory and is responsible for freeing it.
-pub fn decompress_with_ctx(
+pub fn decompress(
     allocator: std.mem.Allocator,
     ctx: *ZSTD_DCtx,
     input: []const u8,
-    output_size: usize,
 ) ![]u8 {
+    const output_size = try get_decompressed_size(input);
+
     const out = try allocator.alloc(u8, output_size);
     errdefer allocator.free(out);
 
@@ -603,6 +536,100 @@ pub fn decompress_with_dict(
     return allocator.realloc(out, written);
 }
 
+extern "c" fn ZSTD_trainFromBuffer(
+    dictBuffer: [*]u8,
+    dictBufferCapacity: usize,
+    samplesBuffer: [*]const u8,
+    samplesSizes: [*]const usize,
+    nbSamples: c_uint,
+) usize;
+
+/// Train a dictionary from sample data for better compression of small similar files.
+/// The samples should be representative of the data you'll compress.
+/// dict_size is the target dictionary size (typical: 100KB for small files).
+/// Returns the dictionary data. Caller owns the memory and is responsible for freeing it.
+pub fn train_dictionary(
+    allocator: std.mem.Allocator,
+    samples: []const []const u8,
+    dict_size: usize,
+) ![]u8 {
+    if (samples.len == 0) {
+        return error.NoSamples;
+    }
+
+    // Build samples buffer and sizes array
+    var total_size: usize = 0;
+    for (samples) |sample| {
+        total_size += sample.len;
+    }
+
+    const samples_buffer = try allocator.alloc(u8, total_size);
+    defer allocator.free(samples_buffer);
+
+    const sample_sizes = try allocator.alloc(usize, samples.len);
+    defer allocator.free(sample_sizes);
+
+    var offset: usize = 0;
+    for (samples, 0..) |sample, i| {
+        @memcpy(samples_buffer[offset .. offset + sample.len], sample);
+        sample_sizes[i] = sample.len;
+        offset += sample.len;
+    }
+
+    // Train dictionary
+    const dict_buffer = try allocator.alloc(u8, dict_size);
+    errdefer allocator.free(dict_buffer);
+
+    const result = ZSTD_trainFromBuffer(
+        dict_buffer.ptr,
+        dict_size,
+        samples_buffer.ptr,
+        sample_sizes.ptr,
+        @intCast(samples.len),
+    );
+
+    if (ZSTD_isError(result) == 1) {
+        std.log.err("Zstd dictionary training error: {s}", .{ZSTD_getErrorName(result)});
+        return error.ZstdError;
+    }
+
+    return allocator.realloc(dict_buffer, result);
+}
+
+extern "c" fn ZSTD_CCtx_loadDictionary(
+    cctx: *ZSTD_CCtx,
+    dict: [*]const u8,
+    dictSize: usize,
+) usize;
+
+extern "c" fn ZSTD_DCtx_loadDictionary(
+    dctx: *ZSTD_DCtx,
+    dict: [*]const u8,
+    dictSize: usize,
+) usize;
+
+/// Load a dictionary into a compression context for reuse across multiple operations.
+/// This is more efficient than passing the dictionary to each compress operation.
+/// The dictionary data is copied internally, so the input can be freed after this call.
+pub fn load_compression_dictionary(ctx: *ZSTD_CCtx, dictionary: []const u8) !void {
+    const result = ZSTD_CCtx_loadDictionary(ctx, dictionary.ptr, dictionary.len);
+    if (ZSTD_isError(result) == 1) {
+        std.log.err("Zstd load compression dictionary error: {s}", .{ZSTD_getErrorName(result)});
+        return error.ZstdError;
+    }
+}
+
+/// Load a dictionary into a decompression context for reuse across multiple operations.
+/// This is more efficient than passing the dictionary to each decompress operation.
+/// The dictionary data is copied internally, so the input can be freed after this call.
+pub fn load_decompression_dictionary(ctx: *ZSTD_DCtx, dictionary: []const u8) !void {
+    const result = ZSTD_DCtx_loadDictionary(ctx, dictionary.ptr, dictionary.len);
+    if (ZSTD_isError(result) == 1) {
+        std.log.err("Zstd load decompression dictionary error: {s}", .{ZSTD_getErrorName(result)});
+        return error.ZstdError;
+    }
+}
+
 // Decompression context wrapper
 const ZSTD_dParameter = enum(i16) {
     ZSTD_d_windowLogMax = 100,
@@ -636,10 +663,28 @@ pub const ZSTD_outBuffer = struct {
     pos: usize, // position where writing stopped. Will be updated. Necessarily 0 <= pos <= size
 };
 
+/// Streaming compression modes that control buffering and output behavior.
+///
+/// ## Mode descriptions:
+///
+/// **ZSTD_e_continue** - Better compression, batch processing
+/// - Buffers data for better compression ratios
+/// - May produce no output (buffering internally)
+/// - Use when: Processing data in batches, compression ratio matters more than latency
+///
+/// **ZSTD_e_flush** - Guaranteed output, real-time streaming
+/// - Forces output for each chunk (guarantees non-empty result)
+/// - Slightly reduces compression ratio
+/// - Use when: Real-time streaming (HTTP, network), need output per chunk
+///
+/// **ZSTD_e_end** - Finalize frame
+/// - Closes the compression frame with footer/checksum
+/// - Call with empty input after last data chunk
+/// - Required to complete valid compressed data
 pub const ZSTD_EndDirective = enum(i32) {
-    ZSTD_e_continue = 0, // collect more input / produce more output
-    ZSTD_e_flush = 1, // immediately flush whatever data is available into a block (block will be incomplete)
-    ZSTD_e_end = 2, // immediately flush whatever data is available into a block, then end the frame
+    ZSTD_e_continue = 0,
+    ZSTD_e_flush = 1,
+    ZSTD_e_end = 2,
 };
 
 extern "c" fn ZSTD_compressStream2(
@@ -681,8 +726,26 @@ pub fn getDecompressStreamOutSize() usize {
 }
 
 /// Streaming compression - compresses input chunk by chunk.
-/// Caller must call repeatedly with chunks until all input is consumed
-/// Returns number of bytes remaining to flush (0 when done)
+///
+/// ## Usage:
+///
+/// Use ZSTD_e_continue for better compression (batch processing):
+/// ```zig
+/// _ = try compressStream(ctx, &out_buf, &in_buf, .ZSTD_e_continue);
+/// _ = try compressStream(ctx, &out_buf, &in_buf, .ZSTD_e_continue);
+/// // Finalize with empty input
+/// _ = try compressStream(ctx, &out_buf, &empty_in, .ZSTD_e_end);
+/// ```
+///
+/// Use ZSTD_e_flush for real-time streaming (guaranteed output):
+/// ```zig
+/// _ = try compressStream(ctx, &out_buf, &in_buf, .ZSTD_e_flush); // guaranteed output
+/// _ = try compressStream(ctx, &out_buf, &in_buf, .ZSTD_e_flush);
+/// // Finalize
+/// _ = try compressStream(ctx, &out_buf, &empty_in, .ZSTD_e_end);
+/// ```
+///
+/// @return Number of bytes remaining to flush (0 when done)
 pub fn compressStream(
     ctx: *ZSTD_CCtx,
     output: *ZSTD_outBuffer,
